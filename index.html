@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SGX Synthesize Visualizer</title>
+    
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Rajdhani', 'sans-serif'] },
+                    colors: {
+                        sgxBlue: '#32527B', sgxYellow: '#FDCC0D',
+                        sgxDark: '#010409', sgxPanel: 'rgba(2, 8, 15, 0.85)'
+                    }
+                }
+            }
+        }
+    </script>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #010409; color: #FDCC0D; user-select: none; touch-action: pan-y; }
+        #canvas-container { position: absolute; width: 100vw; height: 100vh; z-index: 0; }
+        
+        .sgx-panel { background: rgba(2, 8, 15, 0.75); backdrop-filter: blur(12px); border: 1px solid rgba(50, 82, 123, 0.5); border-left: 4px solid #FDCC0D; border-radius: 1rem; }
+        .sgx-glow { text-shadow: 0 0 10px rgba(253, 204, 13, 0.6); }
+        
+        input[type=range] { -webkit-appearance: none; width: 100%; background: transparent; height: 16px; margin: 5px 0; }
+        input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; height: 18px; width: 18px; border-radius: 50%; background: #FDCC0D; box-shadow: 0 0 10px #FDCC0D; cursor: pointer; margin-top: -7px; }
+        input[type=range]::-webkit-slider-runnable-track { width: 100%; height: 4px; background: #32527B; border-radius: 2px; }
+        
+        input[type="color"] { -webkit-appearance: none; border: none; padding: 0; width: 100%; height: 24px; cursor: pointer; background: transparent; border-radius: 8px; }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 1px solid #32527B; border-radius: 8px; }
+
+        .effect-btn { min-width: 70px; flex-shrink: 0; background: rgba(50, 82, 123, 0.2); border: 1px solid #32527B; padding: 10px 4px; font-size: 10px; font-weight: bold; text-align: center; border-radius: 8px; cursor: pointer; transition: all 0.2s; color: white; display: flex; align-items: center; justify-content: center; line-height: 1.1; }
+        .effect-btn.active { background: #FDCC0D; color: #010409; box-shadow: 0 0 10px rgba(253,204,13,0.5); border-color: #FDCC0D; }
+
+        /* Custom Checkbox Toggle */
+        .toggle-checkbox:checked { right: 0; border-color: #FDCC0D; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #FDCC0D; }
+
+        ::-webkit-scrollbar { height: 4px; width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #32527B; border-radius: 4px; }
+
+        #media-feed { display: none; }
+    </style>
+</head>
+<body>
+
+    <div id="canvas-container"></div>
+    <video id="media-feed" src="https://video.wixstatic.com/video/fe81a7_056f6ceeb6744f94991016499cfd95ae/1080p/mp4/file.mp4" loop autoplay muted playsinline crossorigin="anonymous"></video>
+    <canvas id="texture-canvas" style="display:none;"></canvas>
+
+    <div id="ui-layer" class="hidden w-full h-screen p-6 flex-col justify-between pointer-events-none absolute inset-0 z-10">
+        <div class="flex justify-between items-start">
+            <div class="sgx-panel p-4 pointer-events-auto shadow-2xl flex items-center gap-4">
+                <div>
+                    <h1 class="text-2xl font-bold sgx-glow tracking-[0.1em] uppercase">SGX SYNTHESIZE</h1>
+                    <p class="text-[10px] tracking-widest text-sgxBlue font-bold" id="host-status">MÓDULO VJ: ESPERANDO TELEMETRÍA...</p>
+                </div>
+                <button id="btn-audio-sensor" class="bg-sgxBlue bg-opacity-30 border border-sgxBlue text-white text-[10px] font-bold px-3 py-2 rounded uppercase tracking-widest hover:bg-sgxYellow hover:text-black transition animate-pulse">
+                    ACTIVAR SENSOR AUDIO
+                </button>
+            </div>
+            
+            <div id="audio-meter" class="hidden sgx-panel p-2 flex items-center gap-2 pointer-events-auto">
+                <span class="text-[8px] font-bold tracking-widest text-sgxBlue uppercase">BASS<br>FFT</span>
+                <div class="w-20 h-4 bg-black rounded overflow-hidden relative">
+                    <div id="audio-bar" class="h-full bg-sgxYellow w-0 shadow-[0_0_10px_#FDCC0D]"></div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="flex justify-between items-end w-full">
+            <div id="slots-ui" class="sgx-panel p-3 pointer-events-auto flex flex-col gap-2">
+                <span class="text-[10px] font-bold tracking-widest text-sgxYellow uppercase">NODOS ACTIVOS</span>
+                <div class="flex gap-2">
+                    <div id="slot-1" class="w-4 h-4 rounded-full border-2 border-sgxBlue bg-transparent"></div>
+                    <div id="slot-2" class="w-4 h-4 rounded-full border-2 border-sgxBlue bg-transparent"></div>
+                </div>
+            </div>
+
+            <div class="sgx-panel p-4 flex flex-col items-center shadow-2xl pointer-events-auto border-r-4 border-r-sgxYellow border-l-0">
+                <div class="bg-white p-2 rounded-lg mb-2"><div id="qrcode"></div></div>
+                <p class="font-bold text-[11px] tracking-widest text-center text-sgxYellow">ESCANEA PARA<br>SINCRONIZAR</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="controller-ui" class="hidden w-full h-[100dvh] bg-sgxDark flex-col relative overflow-hidden">
+        
+        <div class="w-full h-[50dvh] bg-black relative flex-shrink-0 border-b-2 border-sgxBlue">
+            <video id="local-video" class="w-full h-full object-cover" autoplay playsinline muted></video>
+            <div class="absolute top-4 left-4 flex gap-2">
+                <div class="bg-red-600 text-white text-[10px] px-3 py-1 rounded font-bold animate-pulse shadow-[0_0_10px_red]" id="live-indicator" style="display:none;">EN VIVO</div>
+            </div>
+            
+            <div id="setup-section" class="absolute inset-0 flex items-center justify-center bg-black/70 backdrop-blur-md z-20">
+                <button id="btn-activar" class="bg-sgxYellow text-sgxDark font-bold text-lg px-8 py-4 rounded-xl hover:scale-105 active:scale-95 transition shadow-[0_0_30px_rgba(253,204,13,0.4)]">
+                    CONECTAR NODO
+                </button>
+            </div>
+        </div>
+
+        <div class="w-full h-[50dvh] bg-sgxDark z-10 p-4 flex flex-col gap-3 overflow-y-auto">
+            
+            <div class="flex justify-between items-center bg-sgxPanel p-3 rounded-lg border border-sgxBlue">
+                <div>
+                    <h4 class="text-[12px] font-bold text-sgxYellow tracking-widest">AUDIO REACTIVO</h4>
+                    <p class="text-[9px] text-gray-400">El visualizador pulsa con los bajos.</p>
+                </div>
+                <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in">
+                    <input type="checkbox" name="toggle" id="audio-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 border-sgxDark appearance-none cursor-pointer z-10 transition-all checked:bg-sgxYellow"/>
+                    <label for="audio-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-sgxBlue cursor-pointer transition-colors"></label>
+                </div>
+            </div>
+
+            <div>
+                <h3 class="text-[10px] font-bold tracking-widest text-sgxBlue uppercase mb-2">SYNTHESIZER CORE</h3>
+                <div class="flex gap-2 overflow-x-auto pb-2" id="effect-list">
+                    <div class="effect-btn active" data-mode="0">SPIDER<br>VERSE</div>
+                    <div class="effect-btn" data-mode="1">DATA<br>MOSH</div>
+                    <div class="effect-btn" data-mode="2">FLUID<br>LIQUIFY</div>
+                    <div class="effect-btn" data-mode="3">SOBEL<br>NEON</div>
+                    <div class="effect-btn" data-mode="4">KINETIC<br>PULSE</div>
+                    <div class="effect-btn" data-mode="5">CRT<br>GHOST</div>
+                    <div class="effect-btn" data-mode="6">CHROMA<br>EXTREM</div>
+                    <div class="effect-btn" data-mode="7">DEPTH<br>MAP</div>
+                    <div class="effect-btn" data-mode="8">ASCII<br>VOID</div>
+                    <div class="effect-btn" data-mode="9">THERMAL<br>PRED</div>
+                </div>
+            </div>
+
+            <div class="sgx-panel p-4 flex flex-col gap-3">
+                <div>
+                    <div class="flex justify-between text-[11px] font-bold mb-1"><label>FRAMERATES (STOP-MOTION)</label><span id="val-fps" class="text-sgxYellow">12</span></div>
+                    <input type="range" id="sl-fps" min="2" max="60" step="1" value="12">
+                </div>
+                <div>
+                    <div class="flex justify-between text-[11px] font-bold mb-1"><label>BASE INTENSITY</label><span id="val-int" class="text-sgxYellow">0.5</span></div>
+                    <input type="range" id="sl-int" min="0" max="1" step="0.01" value="0.5">
+                </div>
+                <div>
+                    <div class="flex justify-between text-[11px] font-bold mb-1"><label>SCALE / OVERRIDE</label><span id="val-scale" class="text-sgxYellow">1.0</span></div>
+                    <input type="range" id="sl-scale" min="0.1" max="5" step="0.1" value="1.0">
+                </div>
+                <div>
+                    <div class="flex justify-between text-[11px] font-bold mb-1"><label>TINT EMISSION</label><span id="val-c" class="text-sgxYellow">#FDCC0D</span></div>
+                    <input type="color" id="in-color" value="#fdcc0d">
+                </div>
+            </div>
+            <div class="h-4 w-full flex-shrink-0"></div>
+        </div>
+    </div>
+
+    <script>
+        const urlParams = new URLSearchParams(window.location.search);
+        const mode = urlParams.get('modo');
+        const hostId = urlParams.get('id');
+
+        const peerConfig = { config: { 'iceServers': [{ urls: 'stun:stun.l.google.com:19302' }] } };
+        let peer = null;
+        let dataConnection = null;
+        
+        let vfxState = { mode: 0, fps: 12, intensity: 0.5, scale: 1.0, color: '#fdcc0d', audioReact: false };
+
+        function hexToRgb(hex) {
+            let result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+            return result ? { r: parseInt(result[1], 16)/255, g: parseInt(result[2], 16)/255, b: parseInt(result[3], 16)/255 } : { r:1, g:1, b:1 };
+        }
+
+        // --- GLSL UBERSHADER CON AUDIO Y SPLIT-SCREEN ---
+        const vertexShader = `varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`;
+
+        const fragmentShader = `
+            uniform sampler2D tDiffuse;
+            uniform int u_mode;
+            uniform float u_intensity;
+            uniform float u_scale;
+            uniform vec3 u_color;
+            uniform float u_time;
+            uniform float u_audio; // Inyección del Bass
+            uniform int u_splitscreen; // 1 si hay 2 cámaras conectadas
+            varying vec2 vUv;
+
+            float getLuma(vec3 color) { return dot(color, vec3(0.299, 0.587, 0.114)); }
+
+            void main() {
+                vec2 uv = vUv;
+                
+                // Si la audio-reactividad está on, el audio modifica la intensidad base
+                float dynInt = u_intensity + (u_audio * 2.0); 
+                float dynScale = u_scale + (u_audio * 0.5);
+
+                vec4 texColor = texture2D(tDiffuse, uv);
+                vec3 finalColor = texColor.rgb;
+                float luma = getLuma(finalColor);
+
+                // FX 0: SPIDER-VERSE
+                if (u_mode == 0) {
+                    float offset = dynInt * 0.05;
+                    float r = texture2D(tDiffuse, vec2(uv.x + offset, uv.y)).r;
+                    float b = texture2D(tDiffuse, vec2(uv.x - offset, uv.y)).b;
+                    vec3 glitch = vec3(r, texColor.g, b);
+                    vec2 px = gl_FragCoord.xy / (dynScale * 5.0); 
+                    float pattern = sin(px.x) * sin(px.y);
+                    float comic = step(pattern, getLuma(glitch) * 1.5 - 0.5);
+                    vec3 tintedGlitch = mix(glitch, glitch * u_color * 1.5, 0.5);
+                    finalColor = mix(vec3(0.02, 0.0, 0.05), tintedGlitch, comic + 0.2);
+                }
+                
+                // FX 1: DATA MOSH
+                else if (u_mode == 1) {
+                    if (luma > 0.4 && luma < 0.8) {
+                        uv.y += dynInt * 0.2 * sin(uv.x * (50.0 * dynScale) + u_time);
+                        finalColor = texture2D(tDiffuse, fract(uv)).rgb * u_color;
+                    }
+                }
+                
+                // FX 2: FLUID LIQUIFY
+                else if (u_mode == 2) {
+                    uv.x += sin(uv.y * (10.0 * dynScale) + u_time * 2.0) * 0.05 * dynInt;
+                    uv.y += cos(uv.x * (10.0 * dynScale) + u_time * 2.0) * 0.05 * dynInt;
+                    finalColor = texture2D(tDiffuse, fract(uv)).rgb;
+                    finalColor = mix(finalColor, finalColor * u_color, dynInt);
+                }
+                
+                // FX 3: SOBEL NEON
+                else if (u_mode == 3) {
+                    vec2 texel = vec2(1.0 / 1280.0, 1.0 / 720.0) * (dynInt * 5.0 + 1.0);
+                    float s00 = getLuma(texture2D(tDiffuse, uv + texel * vec2(-1, -1)).rgb);
+                    float s22 = getLuma(texture2D(tDiffuse, uv + texel * vec2(1, 1)).rgb);
+                    float s02 = getLuma(texture2D(tDiffuse, uv + texel * vec2(-1, 1)).rgb);
+                    float s20 = getLuma(texture2D(tDiffuse, uv + texel * vec2(1, -1)).rgb);
+                    float edge = abs(s00 - s22) + abs(s02 - s20);
+                    // El grosor pulsa con el audio
+                    finalColor = mix(vec3(0.0), u_color * (dynScale * 2.0), edge * (5.0 + u_audio * 10.0)); 
+                }
+                
+                // FX 4: KINETIC PULSE
+                else if (u_mode == 4) {
+                    vec2 center = vec2(0.5);
+                    float dist = distance(uv, center);
+                    float pulse = sin(dist * (20.0 * dynScale) - u_time * 5.0) * dynInt * 0.1;
+                    finalColor = texture2D(tDiffuse, uv + (uv - center) * pulse).rgb;
+                    finalColor *= mix(vec3(1.0), u_color, abs(pulse) * 10.0);
+                }
+                
+                // FX 5 a 9 abreviados por lógica central (mantienen la estructura original)
+                else if (u_mode == 5) {
+                    float scanline = sin(uv.y * (800.0 * dynScale)) * 0.04;
+                    float r = texture2D(tDiffuse, uv + vec2(dynInt * 0.01, 0.0)).r;
+                    float b = texture2D(tDiffuse, uv - vec2(dynInt * 0.01, 0.0)).b;
+                    finalColor = vec3(r, texColor.g, b) - scanline;
+                    finalColor *= mix(vec3(1.0), u_color, 0.5);
+                }
+                else if (u_mode == 6) {
+                    float amt = dynInt * 0.2;
+                    float r = texture2D(tDiffuse, vec2(uv.x + amt * dynScale, uv.y - amt)).r;
+                    float g = texture2D(tDiffuse, uv).g;
+                    float b = texture2D(tDiffuse, vec2(uv.x - amt * dynScale, uv.y + amt)).b;
+                    finalColor = vec3(r, g, b) * mix(vec3(1.0), u_color, 0.2);
+                }
+                else if (u_mode == 7) {
+                    vec2 center = vec2(0.5);
+                    vec2 depthUv = center + (uv - center) * (1.0 - luma * dynInt * dynScale);
+                    finalColor = texture2D(tDiffuse, depthUv).rgb;
+                    finalColor = mix(finalColor, u_color * luma, dynInt);
+                }
+                else if (u_mode == 8) {
+                    float pixels = 100.0 / dynScale;
+                    vec2 pixelatedUv = floor(uv * pixels) / pixels;
+                    float pLuma = getLuma(texture2D(tDiffuse, pixelatedUv).rgb);
+                    if(pLuma < 0.2) finalColor = vec3(0.0);
+                    else if(pLuma < 0.5) finalColor = u_color * 0.4;
+                    else if(pLuma < 0.8) finalColor = u_color * 0.8;
+                    else finalColor = u_color * 1.5; 
+                }
+                else if (u_mode == 9) {
+                    luma = fract(luma + dynInt * u_time * 0.5);
+                    vec3 cold = vec3(0.0, 0.0, 0.5);
+                    if (luma < 0.33) finalColor = mix(cold, u_color, luma * 3.0);
+                    else if (luma < 0.66) finalColor = mix(u_color, vec3(1.0, 1.0, 0.0), (luma - 0.33) * 3.0);
+                    else finalColor = mix(vec3(1.0, 1.0, 0.0), vec3(1.0), (luma - 0.66) * 3.0);
+                }
+
+                // MULTIPLEXER SEAM: Si hay 2 videos, creamos una falla digital en el centro perfecto
+                if(u_splitscreen == 1) {
+                    float distToCenter = abs(uv.x - 0.5);
+                    if(distToCenter < 0.005) {
+                        // Tira una línea neón con glitch al ritmo de la música
+                        finalColor = mix(finalColor, u_color * 2.0, sin(uv.y * 50.0 + u_time * 10.0) * dynInt);
+                    }
+                }
+
+                gl_FragColor = vec4(finalColor, 1.0);
+            }
+        `;
+
+        // ==========================================
+        // HOST ENGINE
+        // ==========================================
+        if (mode !== 'controlador') {
+            document.getElementById('ui-layer').style.display = 'flex';
+
+            const scene = new THREE.Scene();
+            const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+            const renderer = new THREE.WebGLRenderer({ antialias: false });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+            // MULTIPLEXER: Array de streams de video
+            const defaultVideo = document.getElementById('media-feed');
+            let activeStreams = []; // Guardará elementos <video> dinámicos
+            
+            const texCanvas = document.getElementById('texture-canvas');
+            const texCtx = texCanvas.getContext('2d', { willReadFrequently: true });
+            texCanvas.width = 1280; texCanvas.height = 720;
+            const videoTexture = new THREE.CanvasTexture(texCanvas);
+            videoTexture.minFilter = THREE.LinearFilter;
+            videoTexture.magFilter = THREE.LinearFilter;
+
+            const initRgb = hexToRgb(vfxState.color);
+            const shaderMat = new THREE.ShaderMaterial({
+                uniforms: {
+                    tDiffuse: { value: videoTexture },
+                    u_mode: { value: vfxState.mode },
+                    u_intensity: { value: vfxState.intensity },
+                    u_scale: { value: vfxState.scale },
+                    u_color: { value: new THREE.Vector3(initRgb.r, initRgb.g, initRgb.b) },
+                    u_time: { value: 0.0 },
+                    u_audio: { value: 0.0 },
+                    u_splitscreen: { value: 0 }
+                },
+                vertexShader: vertexShader,
+                fragmentShader: fragmentShader
+            });
+
+            scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), shaderMat));
+
+            // AUDIO ANALYZER CORE
+            let audioContext, analyser, dataArray;
+            let currentAudioLevel = 0; // Suavizado
+            
+            document.getElementById('btn-audio-sensor').addEventListener('click', async (e) => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    const source = audioContext.createMediaStreamSource(stream);
+                    source.connect(analyser);
+                    analyser.fftSize = 256;
+                    dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    
+                    e.target.style.display = 'none';
+                    document.getElementById('audio-meter').style.display = 'flex';
+                } catch(err) { alert("Necesitas permitir el micrófono para la audio-reactividad."); }
+            });
+
+            function getBassLevel() {
+                if(!analyser) return 0;
+                analyser.getByteFrequencyData(dataArray);
+                let sum = 0;
+                // Sumamos las frecuencias más bajas (el kick y el sub-bass)
+                for(let i=0; i<8; i++) sum += dataArray[i]; 
+                return sum / (8 * 255); // Normalizado 0 a 1
+            }
+
+            // RENDER LOOP
+            let lastDrawTime = 0;
+            const clock = new THREE.Clock();
+            const uiAudioBar = document.getElementById('audio-bar');
+            
+            function animate() {
+                requestAnimationFrame(animate);
+                
+                // 1. Audio Logic
+                let rawAudio = getBassLevel();
+                // Lerp para que no parpadee agresivamente
+                currentAudioLevel += (rawAudio - currentAudioLevel) * 0.2; 
+                uiAudioBar.style.width = `${currentAudioLevel * 100}%`;
+
+                // 2. Stop-Motion & Canvas Multiplexing
+                const now = Date.now();
+                if (now - lastDrawTime >= (1000 / vfxState.fps)) {
+                    
+                    if(activeStreams.length === 0 && defaultVideo.readyState >= 2) {
+                        // Caso Default: Video Loop
+                        texCtx.drawImage(defaultVideo, 0, 0, 1280, 720);
+                        shaderMat.uniforms.u_splitscreen.value = 0;
+                    } 
+                    else if(activeStreams.length === 1 && activeStreams[0].readyState >= 2) {
+                        // Caso 1 Jugador: Fullscreen
+                        texCtx.drawImage(activeStreams[0], 0, 0, 1280, 720);
+                        shaderMat.uniforms.u_splitscreen.value = 0;
+                    }
+                    else if(activeStreams.length >= 2) {
+                        // Caso Multiplex: Split Screen Inteligente (Cropeamos el centro de cada cámara para hacer 50/50)
+                        if(activeStreams[0].readyState >= 2) texCtx.drawImage(activeStreams[0], 320, 0, 640, 720, 0, 0, 640, 720);
+                        if(activeStreams[1].readyState >= 2) texCtx.drawImage(activeStreams[1], 320, 0, 640, 720, 640, 0, 640, 720);
+                        shaderMat.uniforms.u_splitscreen.value = 1;
+                    }
+                    
+                    videoTexture.needsUpdate = true;
+                    lastDrawTime = now;
+                }
+                
+                // 3. Shader Uniforms Update
+                shaderMat.uniforms.u_mode.value = vfxState.mode;
+                shaderMat.uniforms.u_intensity.value = vfxState.intensity;
+                shaderMat.uniforms.u_scale.value = vfxState.scale;
+                shaderMat.uniforms.u_audio.value = vfxState.audioReact ? currentAudioLevel : 0.0;
+                
+                const c = hexToRgb(vfxState.color);
+                shaderMat.uniforms.u_color.value.set(c.r, c.g, c.b);
+                shaderMat.uniforms.u_time.value = clock.getElapsedTime();
+
+                renderer.render(scene, camera);
+            }
+            animate();
+
+            window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
+
+            // WEBRTC HOST
+            peer = new Peer(peerConfig); 
+            peer.on('open', (id) => {
+                const url = window.location.href.split('?')[0] + `?modo=controlador&id=${id}`;
+                new QRCode(document.getElementById("qrcode"), { text: url, width: 100, height: 100, colorDark : "#32527B", colorLight : "#ffffff" });
+            });
+
+            // Manejar telemetría
+            peer.on('connection', (conn) => {
+                conn.on('data', (data) => { if (data.type === 'vfx') vfxState = data.state; });
+            });
+
+            // Manejar llamadas (Multiplexing)
+            peer.on('call', (call) => {
+                if(activeStreams.length >= 2) {
+                    console.log("Slots llenos");
+                    return; // Máximo 2 personas
+                }
+                
+                call.answer(); 
+                document.getElementById('host-status').innerText = "VFX ENGINE: " + (activeStreams.length + 1) + " NODO(S) ONLINE";
+                
+                // Prender LEDs UI
+                if(activeStreams.length === 0) document.getElementById('slot-1').classList.replace('bg-transparent', 'bg-green-500');
+                if(activeStreams.length === 1) document.getElementById('slot-2').classList.replace('bg-transparent', 'bg-green-500');
+
+                call.on('stream', (remoteStream) => {
+                    let newVid = document.createElement('video');
+                    newVid.srcObject = remoteStream;
+                    newVid.autoplay = true;
+                    newVid.playsInline = true;
+                    newVid.muted = true;
+                    activeStreams.push(newVid);
+                });
+            });
+        } 
+        
+        // ==========================================
+        // LÓGICA CELULAR
+        // ==========================================
+        else if (mode === 'controlador' && hostId) {
+            document.getElementById('controller-ui').style.display = 'flex';
+            let localStream = null;
+
+            document.getElementById('btn-activar').addEventListener('click', async (e) => {
+                e.target.innerText = "ACCEDIENDO CÁMARA...";
+                try {
+                    localStream = await navigator.mediaDevices.getUserMedia({
+                        video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+                    });
+                    document.getElementById('local-video').srcObject = localStream;
+                    document.getElementById('setup-section').style.display = 'none';
+                    document.getElementById('live-indicator').style.display = 'block';
+                    initRemote();
+                } catch (err) { alert("Permite la cámara (requiere HTTPS o red local)."); }
+            });
+
+            function initRemote() {
+                peer = new Peer(peerConfig);
+                peer.on('open', () => {
+                    dataConnection = peer.connect(hostId, { reliable: true });
+                    peer.call(hostId, localStream);
+                });
+            }
+
+            const uiFPS = document.getElementById('sl-fps');
+            const uiInt = document.getElementById('sl-int');
+            const uiScale = document.getElementById('sl-scale');
+            const uiColor = document.getElementById('in-color');
+            const uiAudio = document.getElementById('audio-toggle');
+            const btns = document.querySelectorAll('.effect-btn');
+
+            const sendData = () => {
+                vfxState.fps = parseInt(uiFPS.value);
+                vfxState.intensity = parseFloat(uiInt.value);
+                vfxState.scale = parseFloat(uiScale.value);
+                vfxState.color = uiColor.value;
+                vfxState.audioReact = uiAudio.checked;
+                
+                document.getElementById('val-fps').innerText = vfxState.fps;
+                document.getElementById('val-int').innerText = vfxState.intensity.toFixed(2);
+                document.getElementById('val-scale').innerText = vfxState.scale.toFixed(2);
+                document.getElementById('val-c').innerText = vfxState.color.toUpperCase();
+                
+                if(dataConnection && dataConnection.open) dataConnection.send({ type: 'vfx', state: vfxState });
+            };
+
+            [uiFPS, uiInt, uiScale, uiColor, uiAudio].forEach(el => el.addEventListener('input', sendData));
+
+            btns.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    btns.forEach(b => b.classList.remove('active'));
+                    e.currentTarget.classList.add('active');
+                    vfxState.mode = parseInt(e.currentTarget.dataset.mode);
+                    sendData();
+                    if(navigator.vibrate) navigator.vibrate(20); 
+                });
+            });
+        }
+    </script>
+</body>
+</html>
