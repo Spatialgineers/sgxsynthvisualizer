@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SGX Synthesize Visualizer</title>
+    <title>SGX Synthesize Visualizer | Core</title>
     
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -46,21 +46,21 @@
         .effect-btn { min-width: 70px; flex-shrink: 0; background: rgba(50, 82, 123, 0.2); border: 1px solid #32527B; padding: 10px 4px; font-size: 10px; font-weight: bold; text-align: center; border-radius: 8px; cursor: pointer; transition: all 0.2s; color: white; display: flex; align-items: center; justify-content: center; line-height: 1.1; }
         .effect-btn.active { background: #FDCC0D; color: #010409; box-shadow: 0 0 10px rgba(253,204,13,0.5); border-color: #FDCC0D; }
 
-        /* Custom Checkbox Toggle */
         .toggle-checkbox:checked { right: 0; border-color: #FDCC0D; }
         .toggle-checkbox:checked + .toggle-label { background-color: #FDCC0D; }
 
         ::-webkit-scrollbar { height: 4px; width: 4px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #32527B; border-radius: 4px; }
-
-        #media-feed { display: none; }
     </style>
 </head>
 <body>
 
     <div id="canvas-container"></div>
-    <video id="media-feed" src="https://video.wixstatic.com/video/fe81a7_056f6ceeb6744f94991016499cfd95ae/1080p/mp4/file.mp4" loop autoplay muted playsinline crossorigin="anonymous"></video>
+    
+    <div id="video-farm" style="position: fixed; width: 1px; height: 1px; opacity: 0; pointer-events: none; overflow: hidden; z-index: -100;">
+        <video id="media-feed" src="https://video.wixstatic.com/video/fe81a7_056f6ceeb6744f94991016499cfd95ae/1080p/mp4/file.mp4" loop autoplay muted playsinline crossorigin="anonymous"></video>
+    </div>
     <canvas id="texture-canvas" style="display:none;"></canvas>
 
     <div id="ui-layer" class="hidden w-full h-screen p-6 flex-col justify-between pointer-events-none absolute inset-0 z-10">
@@ -116,13 +116,13 @@
 
         <div class="w-full h-[50dvh] bg-sgxDark z-10 p-4 flex flex-col gap-3 overflow-y-auto">
             
-            <div class="flex justify-between items-center bg-sgxPanel p-3 rounded-lg border border-sgxBlue">
+            <div class="flex justify-between items-center bg-sgxPanel p-3 rounded-lg border border-sgxBlue flex-shrink-0">
                 <div>
                     <h4 class="text-[12px] font-bold text-sgxYellow tracking-widest">AUDIO REACTIVO</h4>
                     <p class="text-[9px] text-gray-400">El visualizador pulsa con los bajos.</p>
                 </div>
                 <div class="relative inline-block w-12 align-middle select-none transition duration-200 ease-in">
-                    <input type="checkbox" name="toggle" id="audio-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 border-sgxDark appearance-none cursor-pointer z-10 transition-all checked:bg-sgxYellow"/>
+                    <input type="checkbox" id="audio-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 border-sgxDark appearance-none cursor-pointer z-10 transition-all checked:bg-sgxYellow"/>
                     <label for="audio-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-sgxBlue cursor-pointer transition-colors"></label>
                 </div>
             </div>
@@ -143,7 +143,7 @@
                 </div>
             </div>
 
-            <div class="sgx-panel p-4 flex flex-col gap-3">
+            <div class="sgx-panel p-4 flex flex-col gap-3 flex-shrink-0">
                 <div>
                     <div class="flex justify-between text-[11px] font-bold mb-1"><label>FRAMERATES (STOP-MOTION)</label><span id="val-fps" class="text-sgxYellow">12</span></div>
                     <input type="range" id="sl-fps" min="2" max="60" step="1" value="12">
@@ -191,8 +191,8 @@
             uniform float u_scale;
             uniform vec3 u_color;
             uniform float u_time;
-            uniform float u_audio; // Inyección del Bass
-            uniform int u_splitscreen; // 1 si hay 2 cámaras conectadas
+            uniform float u_audio; 
+            uniform int u_splitscreen; 
             varying vec2 vUv;
 
             float getLuma(vec3 color) { return dot(color, vec3(0.299, 0.587, 0.114)); }
@@ -200,7 +200,6 @@
             void main() {
                 vec2 uv = vUv;
                 
-                // Si la audio-reactividad está on, el audio modifica la intensidad base
                 float dynInt = u_intensity + (u_audio * 2.0); 
                 float dynScale = u_scale + (u_audio * 0.5);
 
@@ -208,7 +207,6 @@
                 vec3 finalColor = texColor.rgb;
                 float luma = getLuma(finalColor);
 
-                // FX 0: SPIDER-VERSE
                 if (u_mode == 0) {
                     float offset = dynInt * 0.05;
                     float r = texture2D(tDiffuse, vec2(uv.x + offset, uv.y)).r;
@@ -220,24 +218,18 @@
                     vec3 tintedGlitch = mix(glitch, glitch * u_color * 1.5, 0.5);
                     finalColor = mix(vec3(0.02, 0.0, 0.05), tintedGlitch, comic + 0.2);
                 }
-                
-                // FX 1: DATA MOSH
                 else if (u_mode == 1) {
                     if (luma > 0.4 && luma < 0.8) {
                         uv.y += dynInt * 0.2 * sin(uv.x * (50.0 * dynScale) + u_time);
                         finalColor = texture2D(tDiffuse, fract(uv)).rgb * u_color;
                     }
                 }
-                
-                // FX 2: FLUID LIQUIFY
                 else if (u_mode == 2) {
                     uv.x += sin(uv.y * (10.0 * dynScale) + u_time * 2.0) * 0.05 * dynInt;
                     uv.y += cos(uv.x * (10.0 * dynScale) + u_time * 2.0) * 0.05 * dynInt;
                     finalColor = texture2D(tDiffuse, fract(uv)).rgb;
                     finalColor = mix(finalColor, finalColor * u_color, dynInt);
                 }
-                
-                // FX 3: SOBEL NEON
                 else if (u_mode == 3) {
                     vec2 texel = vec2(1.0 / 1280.0, 1.0 / 720.0) * (dynInt * 5.0 + 1.0);
                     float s00 = getLuma(texture2D(tDiffuse, uv + texel * vec2(-1, -1)).rgb);
@@ -245,11 +237,8 @@
                     float s02 = getLuma(texture2D(tDiffuse, uv + texel * vec2(-1, 1)).rgb);
                     float s20 = getLuma(texture2D(tDiffuse, uv + texel * vec2(1, -1)).rgb);
                     float edge = abs(s00 - s22) + abs(s02 - s20);
-                    // El grosor pulsa con el audio
                     finalColor = mix(vec3(0.0), u_color * (dynScale * 2.0), edge * (5.0 + u_audio * 10.0)); 
                 }
-                
-                // FX 4: KINETIC PULSE
                 else if (u_mode == 4) {
                     vec2 center = vec2(0.5);
                     float dist = distance(uv, center);
@@ -257,8 +246,6 @@
                     finalColor = texture2D(tDiffuse, uv + (uv - center) * pulse).rgb;
                     finalColor *= mix(vec3(1.0), u_color, abs(pulse) * 10.0);
                 }
-                
-                // FX 5 a 9 abreviados por lógica central (mantienen la estructura original)
                 else if (u_mode == 5) {
                     float scanline = sin(uv.y * (800.0 * dynScale)) * 0.04;
                     float r = texture2D(tDiffuse, uv + vec2(dynInt * 0.01, 0.0)).r;
@@ -296,11 +283,9 @@
                     else finalColor = mix(vec3(1.0, 1.0, 0.0), vec3(1.0), (luma - 0.66) * 3.0);
                 }
 
-                // MULTIPLEXER SEAM: Si hay 2 videos, creamos una falla digital en el centro perfecto
                 if(u_splitscreen == 1) {
                     float distToCenter = abs(uv.x - 0.5);
                     if(distToCenter < 0.005) {
-                        // Tira una línea neón con glitch al ritmo de la música
                         finalColor = mix(finalColor, u_color * 2.0, sin(uv.y * 50.0 + u_time * 10.0) * dynInt);
                     }
                 }
@@ -321,9 +306,9 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-            // MULTIPLEXER: Array de streams de video
             const defaultVideo = document.getElementById('media-feed');
-            let activeStreams = []; // Guardará elementos <video> dinámicos
+            const videoFarm = document.getElementById('video-farm');
+            let activeStreams = []; 
             
             const texCanvas = document.getElementById('texture-canvas');
             const texCtx = texCanvas.getContext('2d', { willReadFrequently: true });
@@ -350,9 +335,8 @@
 
             scene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), shaderMat));
 
-            // AUDIO ANALYZER CORE
             let audioContext, analyser, dataArray;
-            let currentAudioLevel = 0; // Suavizado
+            let currentAudioLevel = 0; 
             
             document.getElementById('btn-audio-sensor').addEventListener('click', async (e) => {
                 try {
@@ -373,12 +357,10 @@
                 if(!analyser) return 0;
                 analyser.getByteFrequencyData(dataArray);
                 let sum = 0;
-                // Sumamos las frecuencias más bajas (el kick y el sub-bass)
                 for(let i=0; i<8; i++) sum += dataArray[i]; 
-                return sum / (8 * 255); // Normalizado 0 a 1
+                return sum / (8 * 255); 
             }
 
-            // RENDER LOOP
             let lastDrawTime = 0;
             const clock = new THREE.Clock();
             const uiAudioBar = document.getElementById('audio-bar');
@@ -386,28 +368,22 @@
             function animate() {
                 requestAnimationFrame(animate);
                 
-                // 1. Audio Logic
                 let rawAudio = getBassLevel();
-                // Lerp para que no parpadee agresivamente
                 currentAudioLevel += (rawAudio - currentAudioLevel) * 0.2; 
                 uiAudioBar.style.width = `${currentAudioLevel * 100}%`;
 
-                // 2. Stop-Motion & Canvas Multiplexing
                 const now = Date.now();
                 if (now - lastDrawTime >= (1000 / vfxState.fps)) {
                     
                     if(activeStreams.length === 0 && defaultVideo.readyState >= 2) {
-                        // Caso Default: Video Loop
                         texCtx.drawImage(defaultVideo, 0, 0, 1280, 720);
                         shaderMat.uniforms.u_splitscreen.value = 0;
                     } 
                     else if(activeStreams.length === 1 && activeStreams[0].readyState >= 2) {
-                        // Caso 1 Jugador: Fullscreen
                         texCtx.drawImage(activeStreams[0], 0, 0, 1280, 720);
                         shaderMat.uniforms.u_splitscreen.value = 0;
                     }
                     else if(activeStreams.length >= 2) {
-                        // Caso Multiplex: Split Screen Inteligente (Cropeamos el centro de cada cámara para hacer 50/50)
                         if(activeStreams[0].readyState >= 2) texCtx.drawImage(activeStreams[0], 320, 0, 640, 720, 0, 0, 640, 720);
                         if(activeStreams[1].readyState >= 2) texCtx.drawImage(activeStreams[1], 320, 0, 640, 720, 640, 0, 640, 720);
                         shaderMat.uniforms.u_splitscreen.value = 1;
@@ -417,7 +393,6 @@
                     lastDrawTime = now;
                 }
                 
-                // 3. Shader Uniforms Update
                 shaderMat.uniforms.u_mode.value = vfxState.mode;
                 shaderMat.uniforms.u_intensity.value = vfxState.intensity;
                 shaderMat.uniforms.u_scale.value = vfxState.scale;
@@ -433,29 +408,22 @@
 
             window.addEventListener('resize', () => renderer.setSize(window.innerWidth, window.innerHeight));
 
-            // WEBRTC HOST
             peer = new Peer(peerConfig); 
             peer.on('open', (id) => {
                 const url = window.location.href.split('?')[0] + `?modo=controlador&id=${id}`;
                 new QRCode(document.getElementById("qrcode"), { text: url, width: 100, height: 100, colorDark : "#32527B", colorLight : "#ffffff" });
             });
 
-            // Manejar telemetría
             peer.on('connection', (conn) => {
                 conn.on('data', (data) => { if (data.type === 'vfx') vfxState = data.state; });
             });
 
-            // Manejar llamadas (Multiplexing)
             peer.on('call', (call) => {
-                if(activeStreams.length >= 2) {
-                    console.log("Slots llenos");
-                    return; // Máximo 2 personas
-                }
+                if(activeStreams.length >= 2) return; 
                 
                 call.answer(); 
                 document.getElementById('host-status').innerText = "VFX ENGINE: " + (activeStreams.length + 1) + " NODO(S) ONLINE";
                 
-                // Prender LEDs UI
                 if(activeStreams.length === 0) document.getElementById('slot-1').classList.replace('bg-transparent', 'bg-green-500');
                 if(activeStreams.length === 1) document.getElementById('slot-2').classList.replace('bg-transparent', 'bg-green-500');
 
@@ -465,9 +433,20 @@
                     newVid.autoplay = true;
                     newVid.playsInline = true;
                     newVid.muted = true;
+                    newVid.crossOrigin = "anonymous";
+                    
+                    // EL HACK: Inyectamos el video en el DOM para que el browser NO pause la decodificación
+                    videoFarm.appendChild(newVid);
+                    
+                    // Forzamos el play de los streams inyectados dinámicamente
+                    newVid.play().catch(e => console.log("Auto-play prevenido, esperando...", e));
+                    
                     activeStreams.push(newVid);
                 });
             });
+            
+            // Forzamos el play del default video también
+            defaultVideo.play().catch(e => console.log("Auto-play del loop prevenido.", e));
         } 
         
         // ==========================================
